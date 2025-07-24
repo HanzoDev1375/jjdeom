@@ -1,19 +1,16 @@
-name: Build bootstraps
+name: Build Bootstraps
 
 on:
   workflow_dispatch:
     inputs:
-      release:
+      upload_to_releases:
         type: boolean
-        description: "Release built bootstraps"
-      tag:
-        type: string
-        description: "Tag for the release"
+        description: "Upload to GitHub Releases?"
+        default: false
 
 jobs:
   bootstraps:
     runs-on: ubuntu-latest
-
     strategy:
       fail-fast: false
       matrix:
@@ -25,24 +22,24 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y autopoint
 
-      - name: Clone repository
+      - name: Clone main repo
         uses: actions/checkout@v4
         with:
           fetch-depth: 1
 
-      - name: Get packages from termux-packages
+      - name: Clone termux-packages
         uses: actions/checkout@v4
         with:
           path: termux-packages
           repository: termux/termux-packages
           ref: 'acf1df1e90034ce0100ac54726ae56792bf56859'
 
-      - name: Setup java
+      - name: Setup Java
         uses: actions/setup-java@v1
         with:
           java-version: 17
 
-      - name: Setup environment
+      - name: Prepare environment
         run: |
           sudo mkdir -p /data
           sudo chown $USER:$USER /data
@@ -55,77 +52,55 @@ jobs:
           find packages/libxml2 -type f -name "*python*" -exec rm {} +
           sudo mkdir -p /home/builder && mv ./* /home/builder
 
-      - name: Create bootstrap archive
+      - name: Build bootstraps
         working-directory: /home/builder
         run: |
           ./clean.sh
           ./scripts/setup-android-sdk.sh
           ./scripts/build-bootstraps.sh --android10 --architectures ${{ matrix.target_arch }}
 
-      - name: Store bootstrap
+      - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: ruby-${{ matrix.target_arch }}
+          name: bootstrap-${{ matrix.target_arch }}
           path: "/home/builder/*.zip"
 
   release:
     needs: bootstraps
     runs-on: ubuntu-latest
-    if: github.ref == 'refs/heads/main' && github.event.inputs.release == 'true' && startsWith(github.event.inputs.tag, 'v')
+    if: github.event.inputs.upload_to_releases == 'true'
     steps:
-      - name: Clone repository
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: Fetch bootstrap archives
+      - name: Download artifacts
         uses: actions/download-artifact@v4
         with:
-          path: ./
+          path: ./artifacts
           merge-multiple: true
 
-      - name: Create new tag
-        run: |
-          git tag "${{ github.event.inputs.tag }}"
-          git push --tags
-
-      - name: Publish bootstrap zips to GitHub release
-        uses: termux/upload-release-action@v4.1.0
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
         with:
-          file: "*.zip"
-          file_glob: true
-          checksums: sha256
-          tag: ${{ github.event.inputs.tag }}
-          repo_token: ${{ secrets.PERSONAL_ACCESS_TOKEN }}
+          files: ./artifacts/*.zip
+          generate_release_notes: true
+          token: ${{ secrets.PERSONAL_ACCESS_TOKEN }}
 
   apk:
     needs: bootstraps
     runs-on: ubuntu-latest
     steps:
-      - name: Clone repository
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 1
-
-      - name: Fetch bootstrap archives
+      - name: Download artifacts
         uses: actions/download-artifact@v4
         with:
+          path: ./bootstraps
           merge-multiple: true
-          path: ./
 
-      - name: Setup java
-        uses: actions/setup-java@v1
-        with:
-          java-version: 17
-
-      - name: Build apk
+      - name: Build APK
         run: |
           git clone https://github.com/jekyllex/termux-app --depth 1
-          mv *.zip termux-app/bootstraps
+          mv ./bootstraps/*.zip termux-app/bootstraps/
           cd termux-app
           ./gradlew assembleDebug
 
-      - name: Store generated APK file
+      - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
           name: termux-app
