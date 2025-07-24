@@ -1,4 +1,4 @@
-name: Build bootstrapsfix
+name: Build bootstraps
 
 on:
   workflow_dispatch:
